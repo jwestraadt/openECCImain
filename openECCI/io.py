@@ -19,6 +19,7 @@ from tifffile import TiffFile, imread
 import numpy as np
 import math
 import re
+import json
 import h5py as h5
 import xml.etree.ElementTree as ET
 import pathlib
@@ -39,6 +40,7 @@ def get_sem_metadata(filename: str) -> dict:
     Supported vendors are:
     * FEI/Thermofisher
     * Zeiss
+    * Custom
 
     Parameters
     ----------
@@ -68,11 +70,11 @@ def get_sem_metadata(filename: str) -> dict:
     """
     file_type = get_file_footprint(filename)
 
-    if file_type in ["FEI_SEM", "Zeiss_SEM"]:
+    if file_type in ["FEI_SEM", "Zeiss_SEM", "Custom"]:
         image_dim = imread(filename).shape
 
         with TiffFile(filename) as tif:
-            if tif.fei_metadata:
+            if file_type == "FEI_SEM":
                 """
                 FEI/Thermofisher SEM metadata
                 """
@@ -114,7 +116,8 @@ def get_sem_metadata(filename: str) -> dict:
 
                 vendor = "FEI"
                 HV = tif.fei_metadata["EBeam"]["HV"] / 1000
-            elif tif.sem_metadata["dp_sem"]:
+
+            elif file_type == "Zeiss_SEM":
                 """
                 Zeiss SEM metadata
                 """
@@ -161,7 +164,27 @@ def get_sem_metadata(filename: str) -> dict:
                 HV = tif.sem_metadata["ap_actualkv"][1]
                 vendor = "Zeiss"
 
-        if resolution[1] < image_dim[0]:
+            elif file_type == "Custom":
+                """
+                Custom SEM metadata
+                """
+                metadata_read = json.loads(tif.pages[0].tags['ImageDescription'].value)
+                vendor = metadata_read['vendor']
+                st_rot_angle = metadata_read['stage_rot_angle']
+                st_tilt_angle = metadata_read['stage_tilt_angle']
+                st_x = metadata_read['stage_x']
+                st_y = metadata_read['stage_y']
+                st_z = metadata_read['stage_z']
+                resolution = metadata_read['resolution']
+                pixel_size = metadata_read['pixel_size']
+                HV = metadata_read['HV']
+                WD = metadata_read['WD']
+                beam_current = metadata_read['beam_current']
+                aperture_diameter = metadata_read['aperture_diameter']
+                column_mode = metadata_read['column_mode']
+
+
+        if int(resolution[1]) < int(image_dim[0]):
             databar = True
         else:
             databar = False
@@ -196,6 +219,7 @@ def get_file_footprint(filename: str) -> str:
     Supported formats are:
     * FEI/Thermofisher SEM .tiff file:          "FEI_SEM"
     * Zeiss SEM .tiff file:                     "Zeiss_SEM"
+    * Custom SEM .tiff file:                     "Custom"
     * Oxford/HKL .ctf file:                     "hkl_ctf"
     * Oxford/HKL raw pattern .tiff file:        "oina-image"
     * Oxford/HKL .hoina file:                   "hkl_hdf5"
@@ -228,8 +252,10 @@ def get_file_footprint(filename: str) -> str:
                 with TiffFile(filename) as tif:
                     if tif.fei_metadata is not None:
                         file_type = "FEI_SEM"
-                    elif tif.sem_metadata["dp_sem"] is not None:
+                    elif tif.sem_metadata is not None:
                         file_type = "Zeiss_SEM"
+                    elif 'ImageDescription' in tif.pages[0].tags:
+                        file_type = "Custom"
                     else:
                         raise KeyError
             except KeyError:
